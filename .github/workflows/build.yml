@@ -2,10 +2,6 @@ name: Build MPDroid
 
 on:
   workflow_dispatch:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
 
 permissions:
   contents: read
@@ -27,6 +23,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install legacy Android SDK packages
         shell: bash
