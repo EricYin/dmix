@@ -35,6 +35,7 @@ jobs:
             "platform-tools" \
             "platforms;android-21" \
             "build-tools;21.1.1" \
+            "build-tools;35.0.0" \
             "extras;android;m2repository"
 
           sudo apt-get update
@@ -78,18 +79,74 @@ jobs:
           path.write_text(text)
           PY
 
-      - name: Build FOSS APK and Java backend
+      - name: Build unsigned FOSS release APK
         shell: bash
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace \
-            :MPDroid:assembleFossDebug \
+            :MPDroid:assembleFossRelease \
             :JMPDCommJava:build
 
-      - name: Upload APK
+      - name: Set up Java for signing tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Sign and verify APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD \
+                      ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing secret: $name"
+              exit 1
+            fi
+          done
+
+          shopt -s nullglob
+          apks=(MPDroid/build/outputs/apk/*foss*release*unsigned.apk)
+          if [[ "${#apks[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one unsigned FOSS release APK"
+            exit 1
+          fi
+
+          keystore="$RUNNER_TEMP/dmix-release.jks"
+          aligned="$RUNNER_TEMP/dmix-aligned.apk"
+          trap 'rm -f "$keystore" "$aligned"' EXIT
+          umask 077
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
+            | base64 --decode > "$keystore"
+
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p MPDroid/build/outputs/signed
+          output="MPDroid/build/outputs/signed/MPDroid-foss-release.apk"
+
+          "$tools/zipalign" -f 4 "${apks[0]}" "$aligned"
+
+          "$tools/apksigner" sign \
+            --ks "$keystore" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "$output" \
+            "$aligned"
+
+          "$tools/apksigner" verify --verbose --print-certs "$output"
+          "$tools/zipalign" -c 4 "$output"
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: MPDroid-foss-debug
-          path: MPDroid/build/outputs/apk/*foss*debug*.apk
+          name: MPDroid-foss-release
+          path: MPDroid/build/outputs/signed/MPDroid-foss-release.apk
           if-no-files-found: error
           retention-days: 14
