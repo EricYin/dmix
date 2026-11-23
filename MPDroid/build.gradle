@@ -1,93 +1,166 @@
+/*
+ * Copyright (C) 2010-2016 The MPDroid Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+apply plugin: 'com.android.application'
+
 buildscript {
     repositories {
-        maven { url 'http://download.crashlytics.com/maven' }
-    }
-
-    dependencies {
-        classpath 'com.crashlytics.tools.gradle:crashlytics-gradle:1.+'
+        mavenCentral()
     }
 }
-
-apply plugin: 'com.android.application'
-apply plugin: 'crashlytics'
 
 repositories {
     mavenCentral()
-    maven { url 'http://download.crashlytics.com/maven' }
+    google()
 }
 
-def gitShortHash() {
-    return "git rev-parse --short HEAD".execute().text.replace("\n", "")
+static def gitShortHash() {
+    return "git rev-parse --short HEAD".execute().text.trim()
 }
 
 android {
-    compileSdkVersion 21
-    buildToolsVersion "21.1.1"
+    namespace "com.namelessdev.mpdroid"
+    compileSdk 35
 
     defaultConfig {
-        minSdkVersion 14
-        targetSdkVersion 21
-        versionCode 54
-        versionName "1.07.2 Final " + gitShortHash()
-    }
-
-    lintOptions {
-        abortOnError false
-        checkReleaseBuilds false
+        applicationId "com.namelessdev.mpdroid"
+        minSdkVersion 21
+        targetSdkVersion 34
+        versionCode 58
+        versionName "1.08 Beta 4 " + gitShortHash()
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_7
-        targetCompatibility JavaVersion.VERSION_1_7
+        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_11
     }
 
-    productFlavors {
-        closedbits {
-            versionName defaultConfig.versionName + "-c"
-        }
+    buildFeatures {
+        buildConfig true
+    }
 
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    flavorDimensions "version"
+
+    productFlavors {
+        all {
+            dimension "version"
+            // Disable Crashlytics by default.
+            ext.enableCrashlytics = false
+        }
         foss {
+            dimension "version"
             versionName defaultConfig.versionName + "-f"
+            dependencies {
+                testImplementation 'junit:junit:4.13.2'
+                testImplementation "org.robolectric:robolectric:3.0"
+            }
             ext.enableCrashlytics = false
         }
     }
-
-    applicationVariants.all { variant ->
-
-        task("${variant.name}Javadoc", type: Javadoc) {
-            title = "$name $version API"
-            description "Generates Javadoc for $variant.name."
-            source = variant.javaCompile.source
-            ext.androidJar =
-                    "${android.plugin.sdkHandler.sdkFolder}" +
-                            "/platforms/${android.compileSdkVersion}/android.jar"
-            classpath = files(variant.javaCompile.classpath.files) + files(ext.androidJar)
-
-            options {
-                links("http://docs.oracle.com/javase/7/docs/api/");
-                linksOffline("http://developer.android.com/reference",
-                        "${android.plugin.sdkHandler.sdkFolder}/docs/reference");
-            }
-
-            exclude {
-                ['**/BuildConfig.java', '**/R.java']
-            }
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/INDEX.LIST']
         }
     }
+
+    applicationVariants.all { final variant ->
+
+        task("${variant.name}Javadoc", type: Javadoc) {
+            title = "$name $versionName"
+            description "Generates Javadoc for $variant.name."
+            group "documentation"
+            source = variant.javaCompileProvider
+            ext.androidJar =
+                    "${android.sdkDirectory}" +
+                            "/platforms/${android.compileSdkVersion}/android.jar"
+            doFirst {
+                classpath = files(variant.javaCompile.classpath.files) + files(ext.androidJar)
+            }
+            gradle.taskGraph.addTaskExecutionListener new BrowseJavadoc(
+                    mTask: "${variant.name}Javadoc",
+                    mIndexFile: file("${destinationDir}/index.html"))
+
+            dependsOn = [':JMPDCommAndroid:debugJavadoc']
+
+            options {
+                author = true
+                header = project.name
+                memberLevel = JavadocMemberLevel.PRIVATE
+                links("http://docs.oracle.com/javase/8/docs/api",
+                        project.tasks.getByPath(":JMPDCommAndroid:debugJavadoc")
+                                .getDestinationDir()
+                                .toString())
+                linksOffline("http://developer.android.com/reference",
+                        "${android.sdkDirectory}/docs/reference")
+                overview("src/main/overview.html")
+                showAll()
+            }
+
+            exclude '**/BuildConfig.java'
+            exclude '**/R.java'
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+    namespace 'com.namelessdev.mpdroid'
 }
 
 dependencies {
-
     // Support Libraries
-    compile 'com.android.support:support-v4:21.0.2'
-    compile 'com.android.support:appcompat-v7:21.0.2'
-
+    implementation 'androidx.palette:palette:1.0.0'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.cardview:cardview:1.0.0'
+    implementation 'com.google.android.material:material:1.12.0'
     // Projects
-    compile project(':JMPDCommAndroid')
-
+    implementation project(':JMPDCommAndroid')
     // Libraries from maven
-    compile 'com.sothree.slidinguppanel:library:2.0.1'
-    compile 'com.github.chrisbanes.actionbarpulltorefresh:library:0.9.3'
-    compile 'asia.ivity.android:drag-sort-listview:1.0'
-    closedbitsCompile 'com.crashlytics.android:crashlytics:1.+'
+    implementation 'asia.ivity.android:drag-sort-listview:1.0'
+//    implementation 'org.realityforge.org.jetbrains.annotations:org.jetbrains.annotations:1.7.0'
 }
+
+class BrowseJavadoc implements TaskExecutionListener {
+
+    String mTask
+
+    File mIndexFile
+
+    @Override
+    void beforeExecute(final Task task) {
+    }
+
+    @Override
+    void afterExecute(final Task task, final TaskState taskState) {
+        if (taskState.executed && !taskState.failure && task.name == mTask) {
+            println "Javadoc built: " + mIndexFile
+            final Class desktop = getClass().classLoader.loadClass("java.awt.Desktop")
+
+            try {
+                desktop.newInstance().browse(mIndexFile.toURI())
+            } catch (final Exception ignored) {
+            }
+        }
+    }
+
+}
+

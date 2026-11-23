@@ -1,11 +1,11 @@
 /*
- * Copyright (C) 2010-2014 The MPDroid Project
+ * Copyright (C) 2010-2016 The MPDroid Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,7 +16,9 @@
 
 package com.namelessdev.mpdroid.models;
 
-import org.a0z.mpd.item.Music;
+import com.anpmech.mpd.item.Music;
+
+import java.util.Locale;
 
 public abstract class AbstractPlaylistMusic extends Music {
 
@@ -47,4 +49,21 @@ public abstract class AbstractPlaylistMusic extends Music {
     public void setForceCoverRefresh(final boolean forceCoverRefresh) {
         mForceCoverRefresh = forceCoverRefresh;
     }
+
+    /*
+     * default is 1
+     */
+    public long size() {
+        return 1;
+    }
+
+    public boolean hasText(String filter) {
+        return ((getAlbumArtistOrArtist() != null ? getAlbumArtistOrArtist() : "")
+                .toLowerCase(Locale.getDefault()).contains(filter) ||
+                (getAlbumName() != null ? getAlbumName() : "")
+                .toLowerCase(Locale.getDefault()).contains(filter) ||
+                (getTitle() != null ? getTitle() : "")
+                .toLowerCase(Locale.getDefault()).contains(filter));
+    }
+
 }

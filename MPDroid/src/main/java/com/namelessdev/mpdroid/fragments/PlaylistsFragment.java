@@ -1,11 +1,11 @@
 /*
- * Copyright (C) 2010-2014 The MPDroid Project
+ * Copyright (C) 2010-2016 The MPDroid Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,20 +16,21 @@
 
 package com.namelessdev.mpdroid.fragments;
 
+import com.anpmech.mpd.item.Artist;
+import com.anpmech.mpd.item.PlaylistFile;
+import com.anpmech.mpd.item.Stream;
 import com.namelessdev.mpdroid.R;
 import com.namelessdev.mpdroid.library.ILibraryFragmentActivity;
 import com.namelessdev.mpdroid.library.PlaylistEditActivity;
 import com.namelessdev.mpdroid.tools.Tools;
 
-import org.a0z.mpd.exception.MPDException;
-import org.a0z.mpd.item.Item;
-import org.a0z.mpd.item.PlaylistFile;
-
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.content.Intent;
-import android.support.annotation.StringRes;
+import android.os.Bundle;
+import android.os.Parcelable;
 import android.util.Log;
 import android.view.ContextMenu;
 import android.view.Menu;
@@ -39,9 +40,17 @@ import android.view.WindowManager.BadTokenException;
 import android.widget.AdapterView;
 import android.widget.AdapterView.AdapterContextMenuInfo;
 
-import java.io.IOException;
+import androidx.annotation.StringRes;
+import androidx.fragment.app.Fragment;
 
-public class PlaylistsFragment extends BrowseFragment {
+/**
+ * This Fragment lists the current stored {@link PlaylistFile}s.
+ *
+ * This class is kept updated via the {@link BrowseFragmentBase#PLAYLIST_FILES} Collection. This
+ * collection will not include the {@link Stream#PLAYLIST_NAME} playlist. That playlist is
+ * considered special and used only with the {@link StreamsFragment}.
+ */
+public class PlaylistsFragment extends BrowseFragment<PlaylistFile> {
 
     public static final int DELETE = 102;
 
@@ -50,33 +59,53 @@ public class PlaylistsFragment extends BrowseFragment {
     private static final String TAG = "PlaylistsFragment";
 
     public PlaylistsFragment() {
-        super(R.string.addPlaylist, R.string.playlistAdded, null);
+        super(R.string.addPlaylist, R.string.playlistAdded);
     }
 
     @Override
-    protected void add(final Item item, final boolean replace, final boolean play) {
-        try {
-            mApp.oMPDAsyncHelper.oMPD.add((PlaylistFile) item, replace, play);
-            if (isAdded()) {
-                Tools.notifyUser(mIrAdded, item);
-            }
-
-        } catch (final IOException | MPDException e) {
-            Log.e(TAG, "Failed to add.", e);
+    protected void add(final PlaylistFile item, final boolean replace, final boolean play) {
+        mApp.getMPD().add(item, replace, play);
+        if (isAdded()) {
+            Tools.notifyUser(mIrAdded, item);
+        } else {
+            Log.e(TAG, "Failed to add.");
         }
     }
 
     @Override
-    protected void add(final Item item, final String playlist) {
+    protected void add(final PlaylistFile item, final PlaylistFile playlist) {
+    }
+
+    @Override
+    public void asyncComplete(final CharSequence token) {
+        super.asyncComplete(token);
+
+        /**
+         * Piggyback off the stored playlists already populating {@link BrowseFragmentBase}.
+         */
+        if (token.equals(UPDATE_PLAYLISTS)) {
+            replaceItems(PLAYLIST_FILES);
+            updateList();
+        }
     }
 
     @Override
     protected void asyncUpdate() {
-        try {
-            mItems = mApp.oMPDAsyncHelper.oMPD.getPlaylists(true);
-        } catch (final IOException | MPDException e) {
-            Log.e(TAG, "Failed to update.", e);
-        }
+    }
+
+    @Override
+    protected Artist getArtist(final PlaylistFile item) {
+        return null;
+    }
+
+    /**
+     * This method returns the default string resource.
+     *
+     * @return The default string resource.
+     */
+    @Override
+    public int getDefaultTitle() {
+        return -1;
     }
 
     @Override
@@ -95,14 +124,21 @@ public class PlaylistsFragment extends BrowseFragment {
         final MenuItem addAndReplaceItem = menu.add(Menu.NONE, DELETE, 0,
                 R.string.deletePlaylist);
         addAndReplaceItem.setOnMenuItemClickListener(this);
+
+        menu.setGroupEnabled(PLAYLIST_ADD_GROUP, false);
     }
 
     @Override
     public void onItemClick(final AdapterView<?> parent, final View view, final int position,
             final long id) {
-        ((ILibraryFragmentActivity) getActivity()).pushLibraryFragment(
-                new StoredPlaylistFragment().init(mItems.get(position).getName()),
-                "stored_playlist");
+        final Activity activity = getActivity();
+        final Bundle bundle = new Bundle(1);
+        final Fragment fragment =
+                Fragment.instantiate(activity, StoredPlaylistFragment.class.getName(), bundle);
+
+        bundle.putParcelable(PlaylistFile.EXTRA, (Parcelable) mItems.get(position));
+
+        ((ILibraryFragmentActivity) activity).pushLibraryFragment(fragment, "stored_playlist");
     }
 
     @Override
@@ -111,7 +147,7 @@ public class PlaylistsFragment extends BrowseFragment {
         switch (item.getItemId()) {
             case EDIT:
                 final Intent intent = new Intent(getActivity(), PlaylistEditActivity.class);
-                intent.putExtra("playlist", mItems.get((int) info.id).getName());
+                intent.putExtra(PlaylistFile.EXTRA, (Parcelable) mItems.get((int) info.id));
                 startActivity(intent);
                 return true;
 
@@ -154,13 +190,10 @@ public class PlaylistsFragment extends BrowseFragment {
         public void onClick(final DialogInterface dialog, final int which) {
             if (which == DialogInterface.BUTTON_POSITIVE) {
                 final String playlist = mItems.get(mItemIndex).getName();
-                try {
-                    mApp.oMPDAsyncHelper.oMPD.getPlaylist().removePlaylist(playlist);
-                    if (isAdded()) {
-                        Tools.notifyUser(R.string.playlistDeleted, playlist);
-                    }
-                    mItems.remove(mItemIndex);
-                } catch (final IOException | MPDException e) {
+                mApp.getMPD().getPlaylist().removePlaylist(playlist);
+                if (isAdded()) {
+                    Tools.notifyUser(R.string.playlistDeleted, playlist);
+                } else {
                     final AlertDialog.Builder builder = new AlertDialog.Builder(getActivity());
                     builder.setTitle(R.string.deletePlaylist);
                     builder.setMessage(
@@ -173,7 +206,6 @@ public class PlaylistsFragment extends BrowseFragment {
                         // Can't display it. Don't care.
                     }
                 }
-                updateFromItems();
             }
         }
     }

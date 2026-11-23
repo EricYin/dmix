@@ -1,11 +1,11 @@
 /*
- * Copyright (C) 2010-2014 The MPDroid Project
+ * Copyright (C) 2010-2016 The MPDroid Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,12 +16,13 @@
 
 package com.namelessdev.mpdroid.helpers;
 
+import com.anpmech.mpd.commandresponse.MusicResponse;
+import com.anpmech.mpd.exception.MPDException;
+import com.anpmech.mpd.item.Artist;
+import com.anpmech.mpd.item.Music;
 import com.namelessdev.mpdroid.MPDApplication;
 import com.namelessdev.mpdroid.R;
 import com.namelessdev.mpdroid.tools.Tools;
-
-import org.a0z.mpd.exception.MPDException;
-import org.a0z.mpd.item.Music;
 
 import android.util.Log;
 
@@ -53,6 +54,8 @@ public class AlbumCache {
 
     static final boolean GZIP = false;
 
+    private static final String CACHE_FILE_EXTENSION = GZIP ? ".gz" : "";
+
     private static final String TAG = "AlbumCache";
 
     protected static AlbumCache sInstance = null;
@@ -66,7 +69,7 @@ public class AlbumCache {
 
     protected File mFilesDir;
 
-    protected Date mLastUpdate = null;
+    protected Date mLastUpdate = null; // date of mpd's last db update
 
     protected CachedMPD mMPD;
 
@@ -82,7 +85,6 @@ public class AlbumCache {
         Log.d(TAG, "Starting ...");
         setMPD(mpd);
     }
-    // details
 
     public static String albumCode(final String artist, final String album,
             final boolean isAlbumArtist) {
@@ -148,14 +150,20 @@ public class AlbumCache {
         return mAlbumSet;
     }
 
-    public Set<String> getAlbums(final String artist, final boolean albumArtist) {
+    public Set<String> getAlbums(final Artist artist, final boolean albumArtist) {
         final Set<String> albums = new HashSet<>();
-        for (final List<String> ai : mAlbumSet) {
-            if (albumArtist && ai.get(2).equals(artist) ||
-                    !albumArtist && ai.get(1).equals(artist)) {
-                albums.add(ai.get(0));
+
+        if (artist != null) {
+            final String artistName = artist.getName();
+
+            for (final List<String> ai : mAlbumSet) {
+                if (albumArtist && ai.get(2).equals(artistName) ||
+                        !albumArtist && ai.get(1).equals(artistName)) {
+                    albums.add(ai.get(0));
+                }
             }
         }
+
         return albums;
     }
 
@@ -171,7 +179,7 @@ public class AlbumCache {
             }
         }
         final List<String> result;
-        if (artists != null && !artists.isEmpty()) {
+        if (!artists.isEmpty()) {
             result = new ArrayList<>(artists);
             Collections.sort(result, String.CASE_INSENSITIVE_ORDER);
         } else {
@@ -197,18 +205,20 @@ public class AlbumCache {
     }
 
     protected synchronized boolean isUpToDate() {
-        final Date mpdlast = mMPD.getStatistics().getDbUpdate();
+        final Date mpdlast = mMPD.getStatistics().getDBUpdateTime();
         Log.d(TAG, "lastupdate " + mLastUpdate + " mpd date " + mpdlast);
-        return (null != mLastUpdate && null != mpdlast && mLastUpdate.after(mpdlast));
+        return (null != mLastUpdate && null != mpdlast &&
+                (mLastUpdate.equals(mpdlast) || mLastUpdate.after(mpdlast)));
     }
 
     protected synchronized boolean load() {
-        final File file = new File(mFilesDir, getFilename() + (GZIP ? ".gz" : ""));
+        final String fileName = getFilename();
+        final File file = new File(mFilesDir, fileName + CACHE_FILE_EXTENSION);
         if (!file.exists()) {
             return false;
         }
         Log.d(TAG, "Loading " + file);
-        final ObjectInputStream restore;
+        ObjectInputStream restore = null;
         boolean loadedOk = false;
         try {
             if (GZIP) {
@@ -226,7 +236,17 @@ public class AlbumCache {
         } catch (final FileNotFoundException ignored) {
         } catch (final Exception e) {
             Log.e(TAG, "Exception.", e);
+        } finally {
+            if (restore != null) {
+                try {
+                    restore.close();
+                } catch (IOException e) {
+                    Log.e(TAG, "Failed to load file: " +
+                            mFilesDir.getPath() + fileName + CACHE_FILE_EXTENSION, e);
+                }
+            }
         }
+
         if (loadedOk) {
             Log.d(TAG, cacheInfo());
         } else {
@@ -270,18 +290,18 @@ public class AlbumCache {
             return true;
         }
         Log.d(TAG, "Cache is NOT up to date. fetching ...");
-        mLastUpdate = Calendar.getInstance().getTime();
+
+        final Date oldUpdate = mLastUpdate;
+        mLastUpdate =  mMPD.getStatistics().getDBUpdateTime();
 
         Tools.notifyUser(R.string.updatingLocalAlbumCacheNote);
 
-        final Date oldUpdate = mLastUpdate;
         mAlbumDetails = new HashMap<>();
         mAlbumSet = new HashSet<>();
 
-        final List<Music> allmusic;
+        final MusicResponse allmusic;
         try {
             allmusic = mMPD.listAllInfo();
-            Log.d(TAG, "allmusic " + allmusic.size());
         } catch (final IOException | MPDException e) {
             mEnabled = false;
             mLastUpdate = null;
@@ -294,36 +314,54 @@ public class AlbumCache {
         }
 
         try {
+            AlbumDetails details = new AlbumDetails();
+            String currentAlbum = "";
+            long lastMod = -1L;
             for (final Music music : allmusic) {
-                final String albumArtist = music.getAlbumArtist();
-                final String artist = music.getArtist();
-                String album = music.getAlbum();
+                final String albumArtist = music.getAlbumArtistName();
+                final String artist = music.getArtistName();
+                String album = music.getAlbumName();
                 if (album == null) {
                     album = "";
                 }
                 final List<String> albumInfo = Arrays.asList
-                        (album, artist == null ? "" : artist,
-                                albumArtist == null ? "" : albumArtist);
+                    (album, artist == null ? "" : artist,
+                     albumArtist == null ? "" : albumArtist);
                 mAlbumSet.add(albumInfo);
 
                 final boolean isAlbumArtist = albumArtist != null && !albumArtist.isEmpty();
                 final String thisAlbum =
                         albumCode(isAlbumArtist ? albumArtist : artist, album, isAlbumArtist);
-                final AlbumDetails details;
-                if (mAlbumDetails.containsKey(thisAlbum)) {
-                    details = mAlbumDetails.get(thisAlbum);
-                } else {
-                    details = new AlbumDetails();
-                    mAlbumDetails.put(thisAlbum, details);
+                if (!thisAlbum.equals(currentAlbum)) { // different Album than previous Song
+                    if (mAlbumDetails.containsKey(thisAlbum)) {
+                        // have details for this album already
+                        details = mAlbumDetails.get(thisAlbum);
+                    } else {  // new album
+                        details = new AlbumDetails();
+                        mAlbumDetails.put(thisAlbum, details);
+                        lastMod = -1L;
+                        details.mLastMod = -1L;
+                    }
+                    currentAlbum = thisAlbum;
                 }
+
                 if (details.mPath == null) {
-                    details.mPath = music.getPath();
+                    details.mPath = music.getParentDirectory();
+                }
+
+                if (null!=details.mPath && !details.mPath.equals("")) {// don't take directories
+                    lastMod = music.getLastMod();
+                    if (lastMod > details.mLastMod) { // is newer
+                        details.mLastMod = lastMod;
+                        //Log.d(TAG, "lastMod: " + thisAlbum+": "+  details.mPath + " - " + details.mLastMod );
+                    }
                 }
                 // if (details.times == null)
                 // details.times = new ArrayList<Long>();
                 // details.times.add((Long)m.getTime());
                 details.mNumTracks += 1;
                 details.mTotalTime += music.getTime();
+
                 if (details.mDate == 0) {
                     details.mDate = music.getDate();
                 }
@@ -346,7 +384,8 @@ public class AlbumCache {
     }
 
     protected synchronized boolean save() {
-        final File file = new File(mFilesDir, getFilename() + (GZIP ? ".gz" : ""));
+        final String fileName = getFilename();
+        final File file = new File(mFilesDir, fileName + CACHE_FILE_EXTENSION);
         Log.d(TAG, "Saving to " + file);
         final File backupfile = new File(file.getAbsolutePath() + ".bak");
         if (file.exists()) {
@@ -355,8 +394,9 @@ public class AlbumCache {
             }
             file.renameTo(backupfile);
         }
-        final ObjectOutputStream save;
+        ObjectOutputStream save = null;
         boolean error = false;
+
         try {
             if (GZIP) {
                 save = new ObjectOutputStream(new GZIPOutputStream
@@ -368,12 +408,21 @@ public class AlbumCache {
             save.writeObject(mLastUpdate);
             save.writeObject(mAlbumDetails);
             save.writeObject(mAlbumSet);
-            save.close();
-            Log.d(TAG, "saved to " + file);
         } catch (final Exception e) {
             error = true;
             Log.e(TAG, "Failed to save.", e);
+        } finally {
+            if (save != null) {
+                try {
+                    save.close();
+                    Log.d(TAG, "saved to " + file);
+                } catch (final IOException e) {
+                    Log.e(TAG, "Failed to close file: " +
+                            mFilesDir.getPath() + fileName + CACHE_FILE_EXTENSION, e);
+                }
+            }
         }
+
         if (error) {
             file.delete();
             backupfile.renameTo(file);
@@ -425,6 +474,8 @@ public class AlbumCache {
 
         long mDate = 0;
 
+        long mLastMod = -1L;
+
         // List<Long> times = null;
         long mNumTracks = 0;
 
@@ -439,6 +490,7 @@ public class AlbumCache {
             mNumTracks = in.readLong();
             mTotalTime = in.readLong();
             mDate = in.readLong();
+            mLastMod = in.readLong();
         }
 
         private void writeObject(final DataOutput out) throws IOException {
@@ -447,6 +499,7 @@ public class AlbumCache {
             out.writeLong(mNumTracks);
             out.writeLong(mTotalTime);
             out.writeLong(mDate);
+            out.writeLong(mLastMod);
         }
     }
 

@@ -1,11 +1,11 @@
 /*
- * Copyright (C) 2010-2014 The MPDroid Project
+ * Copyright (C) 2010-2016 The MPDroid Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,7 +21,7 @@ import com.namelessdev.mpdroid.R;
 
 import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
-import android.support.annotation.StringRes;
+import androidx.annotation.StringRes;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -75,11 +75,14 @@ public final class LibraryTabsUtil {
 
     public static ArrayList<String> getCurrentLibraryTabs() {
         final SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(APP);
-        String currentSettings = settings.getString(LIBRARY_TABS_SETTINGS_KEY, "");
-        if (currentSettings != null && currentSettings.isEmpty()) {
+        String currentSettings =
+                settings.getString(LIBRARY_TABS_SETTINGS_KEY, DEFAULT_LIBRARY_TABS);
+
+        if (currentSettings.isEmpty()) {
             currentSettings = DEFAULT_LIBRARY_TABS;
             resetLibraryTabs();
         }
+
         return new ArrayList<>(Arrays.asList(currentSettings.split('\\'
                 + LIBRARY_TABS_DELIMITER)));
     }

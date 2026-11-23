@@ -1,11 +1,11 @@
 /*
- * Copyright (C) 2010-2014 The MPDroid Project
+ * Copyright (C) 2010-2016 The MPDroid Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,20 +16,19 @@
 
 package com.namelessdev.mpdroid.fragments;
 
+import com.anpmech.mpd.exception.MPDException;
+import com.anpmech.mpd.item.Artist;
+import com.anpmech.mpd.item.Music;
+import com.anpmech.mpd.item.PlaylistFile;
 import com.namelessdev.mpdroid.R;
 import com.namelessdev.mpdroid.adapters.ArrayAdapter;
 import com.namelessdev.mpdroid.library.PlaylistEditActivity;
 import com.namelessdev.mpdroid.tools.Tools;
 import com.namelessdev.mpdroid.views.StoredPlaylistDataBinder;
 
-import org.a0z.mpd.MPDCommand;
-import org.a0z.mpd.exception.MPDException;
-import org.a0z.mpd.item.Item;
-import org.a0z.mpd.item.Music;
-
 import android.content.Intent;
 import android.os.Bundle;
-import android.support.annotation.StringRes;
+import android.os.Parcelable;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -40,40 +39,31 @@ import android.widget.ListAdapter;
 
 import java.io.IOException;
 
-public class StoredPlaylistFragment extends BrowseFragment {
+import androidx.annotation.StringRes;
 
-    private static final String EXTRA_PLAYLIST_NAME = "playlist";
+public class StoredPlaylistFragment extends BrowseFragment<Music> {
 
     private static final String TAG = "StoredPlaylistFragment";
 
-    private String mPlaylistName;
+    private PlaylistFile mPlaylist;
 
     public StoredPlaylistFragment() {
-        super(R.string.addSong, R.string.songAdded, MPDCommand.MPD_SEARCH_TITLE);
+        super(R.string.addSong, R.string.songAdded);
         setHasOptionsMenu(true);
     }
 
     @Override
-    protected void add(final Item item, final boolean replace, final boolean play) {
-        final Music music = (Music) item;
-        try {
-            mApp.oMPDAsyncHelper.oMPD.add(music, replace, play);
-            if (!play) {
-                Tools.notifyUser(R.string.songAdded, music.getTitle(), music.getName());
-            }
-        } catch (final IOException | MPDException e) {
-            Log.e(TAG, "Failed to add.", e);
+    protected void add(final Music item, final boolean replace, final boolean play) {
+        mApp.getMPD().add(item, replace, play);
+        if (!play) {
+            Tools.notifyUser(R.string.songAdded, item.getTitle(), item.getName());
         }
     }
 
     @Override
-    protected void add(final Item item, final String playlist) {
-        try {
-            mApp.oMPDAsyncHelper.oMPD.addToPlaylist(playlist, (Music) item);
-            Tools.notifyUser(mIrAdded, item);
-        } catch (final IOException | MPDException e) {
-            Log.e(TAG, "Failed to add.", e);
-        }
+    protected void add(final Music item, final PlaylistFile playlist) {
+        mApp.getMPD().addToPlaylist(playlist, item);
+        Tools.notifyUser(mIrAdded, item);
     }
 
     @Override
@@ -82,18 +72,30 @@ public class StoredPlaylistFragment extends BrowseFragment {
             if (getActivity() == null) {
                 return;
             }
-            mItems = mApp.oMPDAsyncHelper.oMPD.getPlaylistSongs(mPlaylistName);
+            replaceItems(mApp.getMPD().getPlaylistSongs(mPlaylist));
         } catch (final IOException | MPDException e) {
             Log.e(TAG, "Failed to update.", e);
         }
     }
 
     @Override
+    protected Artist getArtist(final Music item) {
+        return Artist.byName(item.getAlbumArtistOrArtist());
+    }
+
+    @Override
     protected ListAdapter getCustomListAdapter() {
-        if (mItems != null) {
-            return new ArrayAdapter(getActivity(), new StoredPlaylistDataBinder(), mItems);
-        }
-        return super.getCustomListAdapter();
+        return new ArrayAdapter<>(getActivity(), new StoredPlaylistDataBinder<Music>(), mItems);
+    }
+
+    /**
+     * This method returns the default string resource.
+     *
+     * @return The default string resource.
+     */
+    @Override
+    public int getDefaultTitle() {
+        return -1;
     }
 
     @Override
@@ -104,12 +106,16 @@ public class StoredPlaylistFragment extends BrowseFragment {
 
     @Override
     public String getTitle() {
-        return mPlaylistName;
-    }
+        final String title;
+        final PlaylistFile parcelable = getArguments().getParcelable(PlaylistFile.EXTRA);
 
-    public StoredPlaylistFragment init(final String name) {
-        mPlaylistName = name;
-        return this;
+        if (parcelable == null) {
+            title = super.getTitle();
+        } else {
+            title = parcelable.getName();
+        }
+
+        return title;
     }
 
     @Override
@@ -120,8 +126,16 @@ public class StoredPlaylistFragment extends BrowseFragment {
     @Override
     public void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (savedInstanceState != null) {
-            init(savedInstanceState.getString(EXTRA_PLAYLIST_NAME));
+
+        final Bundle bundle;
+        if (savedInstanceState == null) {
+            bundle = getArguments();
+        } else {
+            bundle = savedInstanceState;
+        }
+
+        if (bundle != null) {
+            mPlaylist = bundle.getParcelable(PlaylistFile.EXTRA);
         }
     }
 
@@ -138,13 +152,7 @@ public class StoredPlaylistFragment extends BrowseFragment {
     @Override
     public void onItemClick(final AdapterView<?> parent, final View view, final int position,
             final long id) {
-        mApp.oMPDAsyncHelper.execAsync(new Runnable() {
-            @Override
-            public void run() {
-                add((Item) parent.getAdapter().getItem(position), mApp.isInSimpleMode(),
-                        mApp.isInSimpleMode());
-            }
-        });
+        addAdapterItem(parent, position);
     }
 
     @Override
@@ -154,7 +162,7 @@ public class StoredPlaylistFragment extends BrowseFragment {
         switch (item.getItemId()) {
             case R.id.PLM_EditPL:
                 intent = new Intent(getActivity(), PlaylistEditActivity.class);
-                intent.putExtra("playlist", mPlaylistName);
+                intent.putExtra(PlaylistFile.EXTRA, (Parcelable) mPlaylist);
                 startActivity(intent);
                 return true;
             default:
@@ -172,14 +180,14 @@ public class StoredPlaylistFragment extends BrowseFragment {
 
     @Override
     public void onSaveInstanceState(final Bundle outState) {
-        outState.putString(EXTRA_PLAYLIST_NAME, mPlaylistName);
+        outState.putParcelable(PlaylistFile.EXTRA, (Parcelable) mPlaylist);
         super.onSaveInstanceState(outState);
     }
 
     @Override
     public String toString() {
-        if (mPlaylistName != null) {
-            return mPlaylistName;
+        if (mPlaylist != null) {
+            return mPlaylist.getName();
         } else {
             return getString(R.string.playlist);
         }
