@@ -1,0 +1,96 @@
+name: Build MPDroid
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java for Android SDK tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install legacy Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-21" \
+            "build-tools;21.1.1" \
+            "extras;android;m2repository"
+
+          sudo apt-get update
+          sudo apt-get install -y lib32stdc++6 lib32z1
+
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+
+      - name: Set up Java for legacy Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+
+      - name: Remove obsolete Crashlytics configuration for FOSS build
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("MPDroid/build.gradle")
+          text = path.read_text()
+
+          start = text.index("buildscript {")
+          end = text.index("apply plugin: 'com.android.application'", start)
+          block = text[start:end]
+
+          if "crashlytics-gradle" not in block:
+              raise RuntimeError("Unexpected buildscript configuration")
+
+          text = text[:start] + text[end:]
+
+          for line in (
+              "apply plugin: 'crashlytics'",
+              "    maven { url 'http://download.crashlytics.com/maven' }",
+              "    closedbitsCompile 'com.crashlytics.android:crashlytics:1.+'",
+          ):
+              if text.count(line) != 1:
+                  raise RuntimeError(f"Expected exactly one occurrence: {line}")
+              text = text.replace(line, "")
+
+          path.write_text(text)
+          PY
+
+      - name: Build FOSS APK and Java backend
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace \
+            :MPDroid:assembleFossDebug \
+            :JMPDCommJava:build
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MPDroid-foss-debug
+          path: MPDroid/build/outputs/apk/*foss*debug*.apk
+          if-no-files-found: error
+          retention-days: 14
